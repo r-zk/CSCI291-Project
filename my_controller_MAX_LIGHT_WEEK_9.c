@@ -14,6 +14,7 @@
 #define DEAD_END_THRESHOLD 50.0
 #define DEAD_END_PROXIMITY_THRESHOLD 0.1
 #define MAX_POSITIONS 5000  // Prevent overflow, limit the number of recorded positions
+#define LIGHT_INTENSITY_THRESHOLD 50.0  // Threshold for high light intensity
 
 #define SMOOTHING_FACTOR 0.07
 
@@ -75,12 +76,32 @@ bool is_dead_end(double prox_values[]) {
 
 bool is_duplicate_dead_end(const double *position) {
   for (int i = 0; i < num_dead_ends; i++) {
-    double dist = distance_between_points(position, (const double*)&detected_dead_ends[i]);
+    double dist = distance_between_points(position, (double[]){detected_dead_ends[i].x, detected_dead_ends[i].y, detected_dead_ends[i].z});
     if (dist < DEAD_END_PROXIMITY_THRESHOLD) {
       return true;
     }
   }
   return false;
+}
+
+void move_towards_position(const double *current_position, const PositionLightIntensity *target_position) {
+  double delta_x = target_position->x - current_position[0];
+  double delta_y = target_position->y - current_position[1];
+
+  double target_angle = atan2(delta_y, delta_x);
+  double current_angle = current_position[2];  // Assuming Z value is the heading (adjust if necessary)
+
+  double angle_diff = target_angle - current_angle;
+  if (angle_diff > M_PI) angle_diff -= 2 * M_PI;
+  if (angle_diff < -M_PI) angle_diff += 2 * M_PI;
+
+  // Proportional control for turning
+  double angular_velocity = angle_diff * 0.5;
+  double linear_velocity = 1.0;  // Constant forward speed
+
+  // Set motor velocities based on angle difference
+  wb_motor_set_velocity(wb_robot_get_device("left wheel motor"), linear_velocity - angular_velocity);
+  wb_motor_set_velocity(wb_robot_get_device("right wheel motor"), linear_velocity + angular_velocity);
 }
 
 int main(int argc, char **argv) {
@@ -116,8 +137,11 @@ int main(int argc, char **argv) {
   double left_speed = MAX_SPEED;
 
   const double *initial_gps_position = NULL;
-  while (initial_gps_position == NULL || isnan(initial_gps_position[0]) || isnan(initial_gps_position[1]) || isnan(initial_gps_position[2])) {
+  while (true) {
     initial_gps_position = wb_gps_get_values(gps);
+    if (initial_gps_position != NULL && !isnan(initial_gps_position[0]) && !isnan(initial_gps_position[1]) && !isnan(initial_gps_position[2])) {
+      break;
+    }
     wb_robot_step(TIME_STEP);
   }
 
@@ -138,7 +162,7 @@ int main(int argc, char **argv) {
         double max_light_intensity = -1.0;
         PositionLightIntensity best_position;
         for (int i = 0; i < num_recorded_positions; i++) {
-          if (recorded_positions[i].light_intensity > max_light_intensity) {
+          if (recorded_positions[i].light_intensity > max_light_intensity && recorded_positions[i].light_intensity > LIGHT_INTENSITY_THRESHOLD) {
             max_light_intensity = recorded_positions[i].light_intensity;
             best_position = recorded_positions[i];
           }
@@ -147,11 +171,12 @@ int main(int argc, char **argv) {
         // Move to the position with the highest light intensity
         printf("Moving to position with highest light intensity: (%.2f, %.2f, %.2f)\n", best_position.x, best_position.y, best_position.z);
 
-        // Set the robot's target position and stop there
+        // Navigate towards the best position
         const double *current_position = wb_gps_get_values(gps);
         while (distance_between_points(current_position, (double *)&best_position) > 0.2) {
           current_position = wb_gps_get_values(gps);
-          // Adjust the robot's movement towards best_position here
+          move_towards_position(current_position, &best_position);
+          wb_robot_step(TIME_STEP);
         }
 
         wb_motor_set_velocity(left_motor, 0.0);

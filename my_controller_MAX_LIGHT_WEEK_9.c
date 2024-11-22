@@ -36,7 +36,7 @@ typedef struct {
   double z;
 } DeadEnd;
 
-DeadEnd detected_dead_ends[100];
+DeadEnd detected_dead_ends[25];
 int num_dead_ends = 0;
 
 double initial_position[3] = {0.0, 0.0, 0.0};
@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
 
         // Find the position with the highest light intensity
         double max_light_intensity = -1.0;
-        PositionLightIntensity best_position;
+        PositionLightIntensity best_position = {0.0, 0.0, 0.0, 0.0};  // Initialize best_position
         for (int i = 0; i < num_recorded_positions; i++) {
           if (recorded_positions[i].light_intensity > max_light_intensity && recorded_positions[i].light_intensity > LIGHT_INTENSITY_THRESHOLD) {
             max_light_intensity = recorded_positions[i].light_intensity;
@@ -194,7 +194,6 @@ int main(int argc, char **argv) {
 
     bool front_wall = prox_values[7] > WALL_THRESHOLD;
     bool left_wall = prox_values[1] > WALL_THRESHOLD;
-    bool right_wall = prox_values[5] > WALL_THRESHOLD;
 
     if (front_wall) {
       right_speed = MAX_SPEED;
@@ -216,6 +215,25 @@ int main(int argc, char **argv) {
       light_sum += wb_light_sensor_get_value(light_sensors[i]);
     }
     double average_light_value = light_sum / NUM_SENSORS;
+
+    // Check if the robot is at a dead-end
+    bool dead_end = is_dead_end(prox_values);
+
+    // If it is a new dead-end, check for duplicates
+    if (dead_end && !is_duplicate_dead_end(position)) {
+      // Store the new dead-end and print position and light intensity with [DEAD-END] label
+      detected_dead_ends[num_dead_ends].x = position[0];
+      detected_dead_ends[num_dead_ends].y = position[1];
+      detected_dead_ends[num_dead_ends].z = position[2];
+      num_dead_ends++;
+
+      printf("At Position: (%.2f, %.2f, %.2f), Average Light Intensity: %.2f [DEAD-END]\n", 
+             position[0], position[1], position[2], average_light_value);
+    } else if (!dead_end) {
+      // Regular print for position and light intensity without [DEAD-END] label
+      printf("At Position: (%.2f, %.2f, %.2f), Average Light Intensity: %.2f\n", 
+             position[0], position[1], position[2], average_light_value);
+    }
 
     // Store the current position and light intensity, ensure we don't exceed MAX_POSITIONS
     if (num_recorded_positions < MAX_POSITIONS) {
